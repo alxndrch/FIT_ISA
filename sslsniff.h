@@ -11,13 +11,36 @@
 
 #define SUCC 0
 #define ERR -1
-#define PORT_MAX 65535
+#define PORT_MAX 65535  //!< maximalni hodnota portu
+#define IPV6_HLEN 40  //!< velikost IPv6 hlavicky
+
+typedef enum { IPV4, IPV6 } ip_type;
 
 struct Params{
     char *file;
     char *interface;
     bool help;
 };
+
+struct IPs{
+    uint32_t ipv4;
+    in6_addr ipv6;
+};
+
+struct Data{
+    time_t sec;
+    time_t usec;
+    IPs client_ip;
+    IPs server_ip;
+    uint16_t client_port;
+    uint16_t server_port;
+    ip_type version;
+    std::string sni;
+    uint bytes;
+    uint packets;
+};
+
+std::vector<Data> conn;
 
 /**
  * @brief zpracovani argmumentu
@@ -54,5 +77,19 @@ void process_packet(u_char* user, const pcap_pkthdr* header, const u_char* packe
  * @param end koncovy byte paketu
  */
 void print_packet(const u_char* packet, unsigned begin, unsigned end);
+
+void delete_conn(uint index);
+
+int find_data(in6_addr sip, uint16_t sport, in6_addr dip, uint16_t dport);
+
+void print_conn(time_t sec, time_t usec, uint32_t sip, uint16_t sport, uint32_t dip, uint16_t dport);
+
+void print_conn(time_t sec, time_t usec, in6_addr sip, uint16_t sport, in6_addr dip, uint16_t dport);
+
+void init_conn(time_t sec, time_t usec, uint32_t sip, uint16_t sport, uint32_t dip, uint16_t dport);
+
+void init_conn(time_t sec, time_t usec, in6_addr sip, uint16_t sport, in6_addr dip, uint16_t dport);
+
+
 
 #endif

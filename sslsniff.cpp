@@ -44,8 +44,8 @@ int main(int argc, char *argv[])
     if(par.help)
         return EXIT_SUCCESS;
     
-   // if(sniff(par) == ERR)
-   //     return EXIT_FAILURE;
+    if(sniff(par) == ERR)
+        return EXIT_FAILURE;
 
     return EXIT_SUCCESS;
 }
@@ -173,13 +173,8 @@ int sniff(Params &params)
 }
 
 void process_packet(u_char* user, const pcap_pkthdr* header, const u_char* packet)
-{/*
-
-    vector<char> hex_dump;  // hexadecimalni obsah paketu
+{
     unsigned header_len = 0;  // celkova velikost hlavicky
-
-    const tm *p_time = localtime(&header->ts.tv_sec);  // cas paketu
-    char timestr[16];  // cas paketu v retezci
 
     udphdr *udp_h{};  // hlavicka UDP
     tcphdr *tcp_h{};  // hlavicka TCP
@@ -190,90 +185,115 @@ void process_packet(u_char* user, const pcap_pkthdr* header, const u_char* packe
     u_int16_t dport = 0;  // cilovy port
     u_int16_t sport = 0;  // zdrojovy port
 
-    char* dest = nullptr;  // cilova IP adresa
-    char* src = nullptr;  // zrojova IP adresa
-
     hostent *dest_addr = nullptr;  // cilova adresa
     hostent *src_addr = nullptr; // zrojova adresa
 
     in_addr_t ip = 0;  // pomocna promenna pro vyhodnoceni domenoveho jmena
-
-    strftime(timestr, sizeof(timestr),"%H:%M:%S",p_time);
-    printf("%s.%03ld ", timestr, header->ts.tv_usec);
 
     eth_h = (ether_header*) (packet);
 
     if(ntohs(eth_h->ether_type) == ETHERTYPE_IPV6){
         ip6_h = (ip6_hdr*) (packet + ETH_HLEN);
 
-        alloc_strs(&src,&dest,40);
-        inet_ntop(AF_INET6, &ip6_h->ip6_src, src, 40);
-        inet_ntop(AF_INET6, &ip6_h->ip6_dst, dest, 40);
-
-        ip = inet_addr(src);
-        src_addr = gethostbyaddr((void*)&ip, 16, AF_INET);
-        if(src_addr == nullptr) cout << src;
-        else cout << src_addr->h_name;
-
-
         if(ip6_h->ip6_ctlun.ip6_un1.ip6_un1_nxt == IPPROTO_TCP){
             tcp_h = (tcphdr*) (packet + ETH_HLEN + IPV6_HLEN);
             sport = ntohs(tcp_h->th_sport);
             dport = ntohs(tcp_h->th_dport);
-        }else if(ip6_h->ip6_ctlun.ip6_un1.ip6_un1_nxt == IPPROTO_UDP){
-            udp_h = (udphdr*) (packet + ETH_HLEN + IPV6_HLEN);
-            sport = ntohs(udp_h->uh_sport);
-            dport = ntohs(udp_h->uh_dport);
+
+            if(tcp_h->syn && !tcp_h->ack){             
+                init_conn(header->ts.tv_sec, header->ts.tv_usec, ip6_h->ip6_src, sport, ip6_h->ip6_dst, dport);
+            }else if(tcp_h->fin && tcp_h->ack){         
+                print_conn(header->ts.tv_sec, header->ts.tv_usec, ip6_h->ip6_src, sport, ip6_h->ip6_dst, dport);
+            }
         }
-        cout << " : " << sport << " > ";
-
-        ip = inet_addr(dest);
-        dest_addr = gethostbyaddr((void*)&ip, 16, AF_INET);
-        if(dest_addr == nullptr) cout << dest;
-        else cout << dest_addr->h_name;
-        cout << " : " << dport << endl;
-
-        clean_strs(&src,&dest);
-        header_len = tcp_h != nullptr? ETH_HLEN + IPV6_HLEN + tcp_h->doff*4 : ETH_HLEN + IPV6_HLEN + UDP_HLEN;
 
         // IPv4
     }else if(ntohs(eth_h->ether_type) == ETHERTYPE_IP){
         ip4_h = (iphdr*) (packet + ETH_HLEN);
 
-        alloc_strs(&src,&dest,16);
-        inet_ntop(AF_INET, &ip4_h->saddr, src,16);
-        inet_ntop(AF_INET, &ip4_h->daddr, dest,16);
-
-        ip = inet_addr(src);
-        src_addr = gethostbyaddr((void*)&ip, 16, AF_INET);
-        if(src_addr == nullptr) cout << src;
-        else cout << src_addr->h_name;
-
         if(ip4_h->protocol == IPPROTO_TCP){
             tcp_h = (tcphdr*) (packet + ETH_HLEN + ip4_h->ihl*4);
-            sport = ntohs(tcp_h->th_sport);
-            dport = ntohs(tcp_h->th_dport);
-        }else if(ip4_h->protocol == IPPROTO_UDP){
-            udp_h = (udphdr*) (packet + ETH_HLEN + ip4_h->ihl*4);
-            sport = ntohs(udp_h->uh_sport);
-            dport = ntohs(udp_h->uh_dport);
+            sport = ntohs(tcp_h->th_sport);  // host port 
+            dport = ntohs(tcp_h->th_dport);  // server port
+
+            if(tcp_h->syn && !tcp_h->ack){             
+                init_conn(header->ts.tv_sec, header->ts.tv_usec, ip4_h->saddr, sport, ip4_h->daddr, dport);
+            }else if(tcp_h->fin && tcp_h->ack){         
+                print_conn(header->ts.tv_sec, header->ts.tv_usec, ip4_h->saddr, sport, ip4_h->daddr, dport);
+            }
         }
-
-
-        ip = inet_addr(dest);
-        dest_addr = gethostbyaddr((void*)&ip, 16, AF_INET);
-
-        cout << " : " << sport << " > ";
-
-        if(dest_addr == nullptr) cout << dest;
-        else cout << dest_addr->h_name;
-        cout << " : " << dport << endl;
-
-        clean_strs(&src,&dest);
-        header_len = tcp_h != nullptr? ETH_HLEN + ip4_h->ihl*4 + tcp_h->doff*4 : ETH_HLEN + ip4_h->ihl*4 + UDP_HLEN;
     }
 
-    print_packet(packet, 0, header_len);  // vypis hlavicky
-    print_packet(packet, header_len, header->len);  // vypis dat
-*/
+}
+
+int find_data(uint32_t sip, uint16_t sport, uint32_t dip, uint16_t dport)
+{
+    Data c;
+    for(int i = 0; i < conn.size(); i++){
+        c = conn[i];
+        if(c.client_ip == sip && c.client_port == sport && c.server_ip == dip && c.server_port == dport){
+            return i;
+        }
+    }
+
+    return -1;
+}
+
+void delete_conn(uint index)
+{
+    conn.erase(conn.begin()+index);
+}
+
+void print_conn(time_t sec, time_t usec, uint32_t sip, uint16_t sport, uint32_t dip, uint16_t dport)
+{
+    int conn_index = 0;
+
+    if((conn_index = find_data(sip, sport, dip, dport)) > -1){
+        char src[16];
+        char dest[16];
+        
+        Data c = conn[conn_index];
+
+        const tm *p_time = localtime(&c.sec);  // cas paketu
+        char timestr[20];  // cas paketu v retezci
+        strftime(timestr, sizeof(timestr),"%F %H:%M:%S", p_time);
+        printf("%s.%03ld,", timestr, c.usec);
+
+        inet_ntop(AF_INET, &c.client_ip, src, 16);
+        inet_ntop(AF_INET, &c.server_ip, dest, 16);
+
+        cout << src << ","
+             << c.client_port << ","
+             << dest << ","
+             << c.sni << ","
+             << c.bytes << ","
+             << c.packets << ",";
+            
+        if(sec - c.sec == 0) cout << "0";
+        else  cout << sec - c.sec;
+
+        cout << "." << usec - c.usec << endl;
+
+        delete_conn(conn_index);
+    }
+}
+
+void init_conn(time_t sec, time_t usec, uint32_t sip, uint16_t sport, uint32_t dip, uint16_t dport)
+{
+    int conn_index = 0;
+
+    if((conn_index = find_data(sip, sport, dip, dport)) == -1){
+        conn.push_back({.sec = sec,
+                        .usec = usec, 
+                        .client_ip = sip, 
+                        .client_port = sport,
+                        .server_ip = dip,
+                        .server_port = dport, 
+                        .sni = "",
+                        .bytes = 0,
+                        .packets = 0});
+    }else{
+        conn[conn_index].sec = sec;
+        conn[conn_index].usec = usec;
+    }
 }
