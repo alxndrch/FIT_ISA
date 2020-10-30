@@ -14,33 +14,31 @@
 #define PORT_MAX 65535  //!< maximalni hodnota portu
 #define IPV6_HLEN 40  //!< velikost IPv6 hlavicky
 
-typedef enum { IPV4, IPV6 } ip_type;
-
+/**
+ * @brief parametry z prikazove radky
+ */
 struct Params{
     char *file;
     char *interface;
     bool help;
 };
 
-struct IPs{
-    uint32_t ipv4;
-    in6_addr ipv6;
-};
-
+/**
+ * @brief data pro vypis 
+ */
 struct Data{
-    time_t sec;
-    time_t usec;
-    IPs client_ip;
-    IPs server_ip;
-    uint16_t client_port;
-    uint16_t server_port;
-    ip_type version;
-    std::string sni;
-    uint bytes;
-    uint packets;
+    time_t sec;  //!< cas v sekundach
+    time_t usec;  //!< milisekundy 
+    std::string client_ip;  //!< ip adresa klienta
+    std::string server_ip; //!< ip adresa serveru
+    uint16_t client_port;  //!< port klienta
+    uint16_t server_port;  //!< port serveru
+    std::string sni;  //!< server name indication
+    uint bytes;  //!< pocet poslanych bytu
+    uint packets;  //!< pocet poslanych paketu
 };
 
-std::vector<Data> conn;
+std::vector<Data> conn;  //!< seznam vsech bezicich spojeni
 
 /**
  * @brief zpracovani argmumentu
@@ -69,27 +67,10 @@ int sniff(Params &params);
  */
 void process_packet(u_char* user, const pcap_pkthdr* header, const u_char* packet);
 
-/**
- * @brief vypis obsahu paketu
- *
- * @param packet paket
- * @param begin pocatecni byte paketu
- * @param end koncovy byte paketu
- */
-void print_packet(const u_char* packet, unsigned begin, unsigned end);
+int find_data(std::string sip, uint16_t sport, std::string dip, uint16_t dport);
 
-void delete_conn(uint index);
+void print_conn(time_t sec, time_t usec, std::string sip, uint16_t sport, std::string dip, uint16_t dport);
 
-int find_data(in6_addr sip, uint16_t sport, in6_addr dip, uint16_t dport);
-
-void print_conn(time_t sec, time_t usec, uint32_t sip, uint16_t sport, uint32_t dip, uint16_t dport);
-
-void print_conn(time_t sec, time_t usec, in6_addr sip, uint16_t sport, in6_addr dip, uint16_t dport);
-
-void init_conn(time_t sec, time_t usec, uint32_t sip, uint16_t sport, uint32_t dip, uint16_t dport);
-
-void init_conn(time_t sec, time_t usec, in6_addr sip, uint16_t sport, in6_addr dip, uint16_t dport);
-
-
+void init_conn(time_t sec, time_t usec, std::string sip, uint16_t sport, std::string dip, uint16_t dport);
 
 #endif

@@ -108,7 +108,6 @@ int arg_process(int argc, char** argv, Params &params)
 
 int sniff(Params &params)
 {
-
     /***************************************************************************************
      *    Inspirováno z:
      *    Title: Programming with pcap
@@ -159,7 +158,7 @@ int sniff(Params &params)
         cerr << "Couldn't set filter: " << capture_filter << endl;
         return ERR;
     }
-
+  
     // zachytavani paketu
     if(pcap_loop(pcap_handle, -1, process_packet, nullptr) < 0){
         cerr << "error occured while sniffing packet" << endl;
@@ -174,13 +173,16 @@ int sniff(Params &params)
 
 void process_packet(u_char* user, const pcap_pkthdr* header, const u_char* packet)
 {
-    unsigned header_len = 0;  // celkova velikost hlavicky
+    unsigned paylode_offset = 0;  // celkova velikost hlavicky
 
     udphdr *udp_h{};  // hlavicka UDP
     tcphdr *tcp_h{};  // hlavicka TCP
     iphdr *ip4_h{};  // hlavicka IPv4 datagramu
     ip6_hdr *ip6_h{};  // hlavicka IPv6 datagramu
     ether_header* eth_h{};  // hlavicka ethernetoveho ramce
+
+    string client_ip;  // zdrojova ip adresa
+    string server_ip;  // cilova ip adresa
 
     u_int16_t dport = 0;  // cilovy port
     u_int16_t sport = 0;  // zdrojovy port
@@ -195,63 +197,83 @@ void process_packet(u_char* user, const pcap_pkthdr* header, const u_char* packe
     if(ntohs(eth_h->ether_type) == ETHERTYPE_IPV6){
         ip6_h = (ip6_hdr*) (packet + ETH_HLEN);
 
+        char ip[40];
+        inet_ntop(AF_INET6, &ip6_h->ip6_src, ip, 40); client_ip = ip;
+        inet_ntop(AF_INET6, &ip6_h->ip6_dst, ip, 40); server_ip = ip;
+
         if(ip6_h->ip6_ctlun.ip6_un1.ip6_un1_nxt == IPPROTO_TCP){
             tcp_h = (tcphdr*) (packet + ETH_HLEN + IPV6_HLEN);
             sport = ntohs(tcp_h->th_sport);
             dport = ntohs(tcp_h->th_dport);
 
             if(tcp_h->syn && !tcp_h->ack){             
-                init_conn(header->ts.tv_sec, header->ts.tv_usec, ip6_h->ip6_src, sport, ip6_h->ip6_dst, dport);
+                init_conn(header->ts.tv_sec, header->ts.tv_usec, 
+                            client_ip, sport, server_ip, dport);
             }else if(tcp_h->fin && tcp_h->ack){         
-                print_conn(header->ts.tv_sec, header->ts.tv_usec, ip6_h->ip6_src, sport, ip6_h->ip6_dst, dport);
+                print_conn(header->ts.tv_sec, header->ts.tv_usec, 
+                            client_ip, sport, server_ip, dport);
             }
+
+            paylode_offset = ETH_HLEN + IPV6_HLEN + tcp_h->doff*4;
         }
 
         // IPv4
     }else if(ntohs(eth_h->ether_type) == ETHERTYPE_IP){
         ip4_h = (iphdr*) (packet + ETH_HLEN);
 
+
+        char ip[16];
+        inet_ntop(AF_INET, &ip4_h->saddr, ip,16); client_ip = ip;
+        inet_ntop(AF_INET, &ip4_h->daddr, ip,16); server_ip = ip;
+        //cout << client_ip << ", " << server_ip << endl;
+
         if(ip4_h->protocol == IPPROTO_TCP){
             tcp_h = (tcphdr*) (packet + ETH_HLEN + ip4_h->ihl*4);
             sport = ntohs(tcp_h->th_sport);  // host port 
             dport = ntohs(tcp_h->th_dport);  // server port
 
-            if(tcp_h->syn && !tcp_h->ack){             
-                init_conn(header->ts.tv_sec, header->ts.tv_usec, ip4_h->saddr, sport, ip4_h->daddr, dport);
-            }else if(tcp_h->fin && tcp_h->ack){         
-                print_conn(header->ts.tv_sec, header->ts.tv_usec, ip4_h->saddr, sport, ip4_h->daddr, dport);
+            paylode_offset = ETH_HLEN + ip4_h->ihl*4 + tcp_h->doff*4;  
+            //cout << header->len << ", " << paylode_offset << endl; 
+
+            if(header->len > ETH_ZLEN && paylode_offset != header->len){
+                
             }
+
+
+
+            if(tcp_h->syn && !tcp_h->ack){             
+                //init_conn(header->ts.tv_sec, header->ts.tv_usec, 
+                //            client_ip, sport, server_ip, dport);
+            }else if(tcp_h->fin && tcp_h->ack){         
+                //print_conn(header->ts.tv_sec, header->ts.tv_usec, 
+                //            client_ip, sport, server_ip, dport);
+            }
+
+             
         }
     }
 
 }
 
-int find_data(uint32_t sip, uint16_t sport, uint32_t dip, uint16_t dport)
+int find_data(string sip, uint16_t sport, string dip, uint16_t dport)
 {
-    Data c;
     for(int i = 0; i < conn.size(); i++){
-        c = conn[i];
-        if(c.client_ip == sip && c.client_port == sport && c.server_ip == dip && c.server_port == dport){
-            return i;
-        }
+        Data c = conn[i];
+        
+        if(c.client_ip == sip && c.client_port == sport 
+            && c.server_ip == dip && c.server_port == dport)
+                return i;
     }
 
     return -1;
 }
 
-void delete_conn(uint index)
-{
-    conn.erase(conn.begin()+index);
-}
-
-void print_conn(time_t sec, time_t usec, uint32_t sip, uint16_t sport, uint32_t dip, uint16_t dport)
+void print_conn(time_t sec, time_t usec, string sip, uint16_t sport, string dip, uint16_t dport)
 {
     int conn_index = 0;
 
     if((conn_index = find_data(sip, sport, dip, dport)) > -1){
-        char src[16];
-        char dest[16];
-        
+
         Data c = conn[conn_index];
 
         const tm *p_time = localtime(&c.sec);  // cas paketu
@@ -259,26 +281,24 @@ void print_conn(time_t sec, time_t usec, uint32_t sip, uint16_t sport, uint32_t 
         strftime(timestr, sizeof(timestr),"%F %H:%M:%S", p_time);
         printf("%s.%03ld,", timestr, c.usec);
 
-        inet_ntop(AF_INET, &c.client_ip, src, 16);
-        inet_ntop(AF_INET, &c.server_ip, dest, 16);
-
-        cout << src << ","
+        cout << c.client_ip << ","
              << c.client_port << ","
-             << dest << ","
+             << c.server_ip << ","
              << c.sni << ","
              << c.bytes << ","
              << c.packets << ",";
             
-        if(sec - c.sec == 0) cout << "0";
-        else  cout << sec - c.sec;
+        if(sec - c.sec == 0) cout << "0.";
+        else cout << sec - c.sec << ".";
 
+        
         cout << "." << usec - c.usec << endl;
 
-        delete_conn(conn_index);
+        conn.erase(conn.begin()+conn_index);  // smazani komunikace ze seznamu
     }
 }
 
-void init_conn(time_t sec, time_t usec, uint32_t sip, uint16_t sport, uint32_t dip, uint16_t dport)
+void init_conn(time_t sec, time_t usec, string sip, uint16_t sport, string dip, uint16_t dport)
 {
     int conn_index = 0;
 
@@ -286,8 +306,8 @@ void init_conn(time_t sec, time_t usec, uint32_t sip, uint16_t sport, uint32_t d
         conn.push_back({.sec = sec,
                         .usec = usec, 
                         .client_ip = sip, 
-                        .client_port = sport,
                         .server_ip = dip,
+                        .client_port = sport,
                         .server_port = dport, 
                         .sni = "",
                         .bytes = 0,
