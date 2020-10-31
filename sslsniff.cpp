@@ -10,6 +10,7 @@
 #include <cerrno>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <ctime>
 #include <getopt.h>
 #include <ifaddrs.h>
@@ -167,13 +168,14 @@ int sniff(Params &params)
 
     // zavreni zarizeni
     pcap_close(pcap_handle);
+    pcap_freecode(&fp);
 
     return SUCC;
 }
 
 void process_packet(u_char* user, const pcap_pkthdr* header, const u_char* packet)
 {
-    unsigned paylode_offset = 0;  // celkova velikost hlavicky
+    unsigned payload_offset = 0;  // celkova velikost hlavicky
 
     udphdr *udp_h{};  // hlavicka UDP
     tcphdr *tcp_h{};  // hlavicka TCP
@@ -194,6 +196,7 @@ void process_packet(u_char* user, const pcap_pkthdr* header, const u_char* packe
 
     eth_h = (ether_header*) (packet);
 
+    // IPv6
     if(ntohs(eth_h->ether_type) == ETHERTYPE_IPV6){
         ip6_h = (ip6_hdr*) (packet + ETH_HLEN);
 
@@ -207,52 +210,41 @@ void process_packet(u_char* user, const pcap_pkthdr* header, const u_char* packe
             dport = ntohs(tcp_h->th_dport);
 
             if(tcp_h->syn && !tcp_h->ack){             
-                init_conn(header->ts.tv_sec, header->ts.tv_usec, 
-                            client_ip, sport, server_ip, dport);
+                //init_conn(header->ts.tv_sec, header->ts.tv_usec, 
+                //            client_ip, sport, server_ip, dport);
             }else if(tcp_h->fin && tcp_h->ack){         
-                print_conn(header->ts.tv_sec, header->ts.tv_usec, 
-                            client_ip, sport, server_ip, dport);
+                //print_conn(header->ts.tv_sec, header->ts.tv_usec, 
+                //            client_ip, sport, server_ip, dport);
+            }else if(header->len > ETH_ZLEN && payload_offset != header->len){ 
+                //payload_offset = ETH_HLEN + IPV6_HLEN + tcp_h->doff*4; 
+                // parse_ssl(client_ip, sport, server_ip, dport, &packet[payload_offset], header->len - payload_offset);
             }
-
-            paylode_offset = ETH_HLEN + IPV6_HLEN + tcp_h->doff*4;
         }
-
-        // IPv4
+    // IPv4
     }else if(ntohs(eth_h->ether_type) == ETHERTYPE_IP){
         ip4_h = (iphdr*) (packet + ETH_HLEN);
-
 
         char ip[16];
         inet_ntop(AF_INET, &ip4_h->saddr, ip,16); client_ip = ip;
         inet_ntop(AF_INET, &ip4_h->daddr, ip,16); server_ip = ip;
-        //cout << client_ip << ", " << server_ip << endl;
 
         if(ip4_h->protocol == IPPROTO_TCP){
             tcp_h = (tcphdr*) (packet + ETH_HLEN + ip4_h->ihl*4);
             sport = ntohs(tcp_h->th_sport);  // host port 
             dport = ntohs(tcp_h->th_dport);  // server port
 
-            paylode_offset = ETH_HLEN + ip4_h->ihl*4 + tcp_h->doff*4;  
-            //cout << header->len << ", " << paylode_offset << endl; 
-
-            if(header->len > ETH_ZLEN && paylode_offset != header->len){
-                
-            }
-
-
-
             if(tcp_h->syn && !tcp_h->ack){             
-                //init_conn(header->ts.tv_sec, header->ts.tv_usec, 
-                //            client_ip, sport, server_ip, dport);
+                init_conn(header->ts.tv_sec, header->ts.tv_usec, 
+                            client_ip, sport, server_ip, dport);
             }else if(tcp_h->fin && tcp_h->ack){         
                 //print_conn(header->ts.tv_sec, header->ts.tv_usec, 
                 //            client_ip, sport, server_ip, dport);
+            }else if(header->len > ETH_ZLEN && payload_offset != header->len){ 
+                payload_offset = ETH_HLEN + ip4_h->ihl*4 + tcp_h->doff*4;  
+                parse_ssl(client_ip, sport, server_ip, dport, &packet[payload_offset], header->len - payload_offset);
             }
-
-             
         }
     }
-
 }
 
 int find_data(string sip, uint16_t sport, string dip, uint16_t dport)
@@ -272,7 +264,7 @@ void print_conn(time_t sec, time_t usec, string sip, uint16_t sport, string dip,
 {
     int conn_index = 0;
 
-    if((conn_index = find_data(sip, sport, dip, dport)) > -1){
+    if((conn_index = find_data(dip, dport, sip, sport)) > -1){
 
         Data c = conn[conn_index];
 
@@ -286,13 +278,8 @@ void print_conn(time_t sec, time_t usec, string sip, uint16_t sport, string dip,
              << c.server_ip << ","
              << c.sni << ","
              << c.bytes << ","
-             << c.packets << ",";
-            
-        if(sec - c.sec == 0) cout << "0.";
-        else cout << sec - c.sec << ".";
-
-        
-        cout << "." << usec - c.usec << endl;
+             << c.packets << ","
+             << ((sec - c.sec) * 1000000.0 + (usec - c.usec)) / 1000000.0 << endl;
 
         conn.erase(conn.begin()+conn_index);  // smazani komunikace ze seznamu
     }
@@ -316,4 +303,53 @@ void init_conn(time_t sec, time_t usec, string sip, uint16_t sport, string dip, 
         conn[conn_index].sec = sec;
         conn[conn_index].usec = usec;
     }
+}
+
+void parse_ssl(string sip, uint16_t sport, string dip, uint16_t dport, const u_char *packet, unsigned size)
+{
+    enum ctype_values : uint8_t { 
+        CHANGE_CIPHER_SPEC = 20, ALERT = 21, HANDSHAKE = 22, APPLICATION_DATA = 23
+    }; 
+
+    const uint8_t LENGHT_INDEX = 3;
+    const uint8_t HANDSHAKE_TYPE_INDEX = 5;
+
+    uint16_t lenght;  // delka v bytech 
+    ctype_values content_type;  // typ obsahu (handshake, app. data, alert, ...)
+    uint16_t sni_lenght;  // delka sni
+    char *sni = nullptr;  // server name indication
+    unsigned index = 43;  // index bytu v paketu, pro parsovani ssl/tls
+    int conn_index = 0;  // index do seznamu spojeni
+
+    //do{
+
+    cout << sip << ", " << dip << ", paylode: " << size << ", ";
+
+    content_type = ctype_values(packet[0]);
+    lenght = uint16_t(packet[LENGHT_INDEX] << 8 | packet[LENGHT_INDEX+1]);
+
+    cout << lenght << " +5" << endl;
+
+    if(content_type == HANDSHAKE){
+        if(uint8_t(packet[HANDSHAKE_TYPE_INDEX]) == 1){
+
+            index += uint8_t(packet[index]) + UINT8_BYTE;
+            index += uint16_t(packet[index] << 8 | packet[index+1]) + UINT16_BYTE;
+            index += uint8_t(packet[index]) + UINT8_BYTE + 11;
+
+            sni_lenght = uint16_t(packet[index-2] << 8 | packet[index-1]);
+            sni = new char[sni_lenght+1];
+            sni[sni_lenght] = '\0';
+
+            memcpy(sni, &packet[index], sni_lenght);
+
+            if((conn_index = find_data(sip, sport, dip, dport)) > -1 
+                || (conn_index = find_data(dip, dport, sip, sport)) > -1){
+                conn[conn_index].sni = string(sni);
+            }
+
+            delete [] sni;
+        }
+    }
+    //}while(size - lenght - 5);
 }
