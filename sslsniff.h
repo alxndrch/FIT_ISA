@@ -3,7 +3,7 @@
  * @file sslsniff.h
  *
  * @author Alexandr Chalupnik <xchalu15@stud.fit.vutbr.cz>
- * @date 20.10 2020
+ * @date 29.10 2020
  */
 
 #ifndef FIT_ISA_SSLSNIFFER_H
@@ -76,7 +76,9 @@ void print_conn(time_t sec, time_t usec, std::string sip, uint16_t sport, std::s
 
 void init_conn(time_t sec, time_t usec, std::string sip, uint16_t sport, std::string dip, uint16_t dport);
 
-void parse_ssl(std::string sip, uint16_t sport, std::string dip, uint16_t dport, const u_char *packet, unsigned size);
+void parse_ssl(std::string sip, uint16_t sport, std::string dip, uint16_t dport, const u_char *packet, int size);
+
+void inc_packet(std::string sip, uint16_t sport, std::string dip, uint16_t dport);
 
 
 #endif

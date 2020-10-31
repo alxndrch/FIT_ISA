@@ -3,7 +3,7 @@
  * @file sslsniff.cpp
  *
  * @author Alexandr Chalupnik <xchalu15@stud.fit.vutbr.cz>
- * @date 20.10 2020
+ * @date 29.10 2020
  */
 
 #include <arpa/inet.h>
@@ -210,14 +210,17 @@ void process_packet(u_char* user, const pcap_pkthdr* header, const u_char* packe
             dport = ntohs(tcp_h->th_dport);
 
             if(tcp_h->syn && !tcp_h->ack){             
-                //init_conn(header->ts.tv_sec, header->ts.tv_usec, 
-                //            client_ip, sport, server_ip, dport);
+                init_conn(header->ts.tv_sec, header->ts.tv_usec, client_ip, sport, server_ip, dport);
+                inc_packet(client_ip, sport, server_ip, dport);
             }else if(tcp_h->fin && tcp_h->ack){         
-                //print_conn(header->ts.tv_sec, header->ts.tv_usec, 
-                //            client_ip, sport, server_ip, dport);
+                inc_packet(client_ip, sport, server_ip, dport);
+                print_conn(header->ts.tv_sec, header->ts.tv_usec, client_ip, sport, server_ip, dport);
             }else if(header->len > ETH_ZLEN && payload_offset != header->len){ 
-                //payload_offset = ETH_HLEN + IPV6_HLEN + tcp_h->doff*4; 
-                // parse_ssl(client_ip, sport, server_ip, dport, &packet[payload_offset], header->len - payload_offset);
+                payload_offset = ETH_HLEN + IPV6_HLEN + tcp_h->doff*4; 
+                parse_ssl(client_ip, sport, server_ip, dport, &packet[payload_offset], header->len - payload_offset);
+                inc_packet(client_ip, sport, server_ip, dport);
+            }else{
+                inc_packet(client_ip, sport, server_ip, dport);
             }
         }
     // IPv4
@@ -234,14 +237,17 @@ void process_packet(u_char* user, const pcap_pkthdr* header, const u_char* packe
             dport = ntohs(tcp_h->th_dport);  // server port
 
             if(tcp_h->syn && !tcp_h->ack){             
-                init_conn(header->ts.tv_sec, header->ts.tv_usec, 
-                            client_ip, sport, server_ip, dport);
+                init_conn(header->ts.tv_sec, header->ts.tv_usec, client_ip, sport, server_ip, dport);
+                inc_packet(client_ip, sport, server_ip, dport);
             }else if(tcp_h->fin && tcp_h->ack){         
-                //print_conn(header->ts.tv_sec, header->ts.tv_usec, 
-                //            client_ip, sport, server_ip, dport);
+                inc_packet(client_ip, sport, server_ip, dport);
+                print_conn(header->ts.tv_sec, header->ts.tv_usec, client_ip, sport, server_ip, dport);
             }else if(header->len > ETH_ZLEN && payload_offset != header->len){ 
                 payload_offset = ETH_HLEN + ip4_h->ihl*4 + tcp_h->doff*4;  
                 parse_ssl(client_ip, sport, server_ip, dport, &packet[payload_offset], header->len - payload_offset);
+                inc_packet(client_ip, sport, server_ip, dport);
+            }else{
+                inc_packet(client_ip, sport, server_ip, dport);
             }
         }
     }
@@ -305,7 +311,7 @@ void init_conn(time_t sec, time_t usec, string sip, uint16_t sport, string dip, 
     }
 }
 
-void parse_ssl(string sip, uint16_t sport, string dip, uint16_t dport, const u_char *packet, unsigned size)
+void parse_ssl(string sip, uint16_t sport, string dip, uint16_t dport, const u_char *packet, int size)
 {
     enum ctype_values : uint8_t { 
         CHANGE_CIPHER_SPEC = 20, ALERT = 21, HANDSHAKE = 22, APPLICATION_DATA = 23
@@ -321,17 +327,18 @@ void parse_ssl(string sip, uint16_t sport, string dip, uint16_t dport, const u_c
     unsigned index = 43;  // index bytu v paketu, pro parsovani ssl/tls
     int conn_index = 0;  // index do seznamu spojeni
 
-    //do{
+    //cout << sip << ", " << dip << endl;
+    do{
+        content_type = ctype_values(packet[0]);
+        lenght = uint16_t(packet[LENGHT_INDEX] << 8 | packet[LENGHT_INDEX+1]);
 
-    cout << sip << ", " << dip << ", paylode: " << size << ", ";
+        //for(int i = 0; i < 10; i++){
+        //    printf("%x ", packet[i]);
+        //}
+        //printf("\n");
+        //cout << lenght << endl;
 
-    content_type = ctype_values(packet[0]);
-    lenght = uint16_t(packet[LENGHT_INDEX] << 8 | packet[LENGHT_INDEX+1]);
-
-    cout << lenght << " +5" << endl;
-
-    if(content_type == HANDSHAKE){
-        if(uint8_t(packet[HANDSHAKE_TYPE_INDEX]) == 1){
+        if(content_type == HANDSHAKE && uint8_t(packet[HANDSHAKE_TYPE_INDEX]) == 1){  // 1 - Client Hello
 
             index += uint8_t(packet[index]) + UINT8_BYTE;
             index += uint16_t(packet[index] << 8 | packet[index+1]) + UINT16_BYTE;
@@ -349,7 +356,21 @@ void parse_ssl(string sip, uint16_t sport, string dip, uint16_t dport, const u_c
             }
 
             delete [] sni;
+        }else if(content_type < CHANGE_CIPHER_SPEC || content_type > APPLICATION_DATA){
+
         }
+
+        packet = (packet + lenght + 5);  // posunuti se v paketu za zpracovany tls
+        size -= (lenght + 5);
+    }while(size > 0);
+}
+
+void inc_packet(string sip, uint16_t sport, string dip, uint16_t dport)
+{
+    int conn_index = 0;
+
+    if((conn_index = find_data(sip, sport, dip, dport)) > -1 
+        || (conn_index = find_data(dip, dport, sip, sport)) > -1){
+        conn[conn_index].packets += 1;
     }
-    //}while(size - lenght - 5);
 }
