@@ -194,6 +194,8 @@ void process_packet(u_char* user, const pcap_pkthdr* header, const u_char* packe
 
     in_addr_t ip = 0;  // pomocna promenna pro vyhodnoceni domenoveho jmena
 
+    bool FIN_STATE = false;  // pocitadlo FIN flagu
+
     eth_h = (ether_header*) (packet);
 
     // IPv6
@@ -238,17 +240,21 @@ void process_packet(u_char* user, const pcap_pkthdr* header, const u_char* packe
 
             if(tcp_h->syn && !tcp_h->ack){             
                 init_conn(header->ts.tv_sec, header->ts.tv_usec, client_ip, sport, server_ip, dport);
-                inc_packet(client_ip, sport, server_ip, dport);
-            }else if(tcp_h->fin && tcp_h->ack){         
-                inc_packet(client_ip, sport, server_ip, dport);
-                print_conn(header->ts.tv_sec, header->ts.tv_usec, client_ip, sport, server_ip, dport);
-            }else if(header->len > ETH_ZLEN && payload_offset != header->len){ 
+            }else if(tcp_h->fin && tcp_h->ack){
+                FIN_STATE = fin_test(client_ip, sport, server_ip, dport);
+
+                if(FIN_STATE == true){
+                    inc_packet(client_ip, sport, server_ip, dport);
+                    print_conn(header->ts.tv_sec, header->ts.tv_usec, client_ip, sport, server_ip, dport);
+                }
+
+            }
+
+            if(header->len > ETH_ZLEN && payload_offset != header->len){ 
                 payload_offset = ETH_HLEN + ip4_h->ihl*4 + tcp_h->doff*4;  
                 parse_ssl(client_ip, sport, server_ip, dport, &packet[payload_offset], header->len - payload_offset);
-                inc_packet(client_ip, sport, server_ip, dport);
-            }else{
-                inc_packet(client_ip, sport, server_ip, dport);
             }
+            inc_packet(client_ip, sport, server_ip, dport);
         }
     }
 }
@@ -270,7 +276,8 @@ void print_conn(time_t sec, time_t usec, string sip, uint16_t sport, string dip,
 {
     int conn_index = 0;
 
-    if((conn_index = find_data(dip, dport, sip, sport)) > -1){
+    if((conn_index = find_data(sip, sport, dip, dport)) > -1 
+        ||(conn_index = find_data(dip, dport, sip, sport)) > -1){
 
         Data c = conn[conn_index];
 
@@ -304,7 +311,8 @@ void init_conn(time_t sec, time_t usec, string sip, uint16_t sport, string dip, 
                         .server_port = dport, 
                         .sni = "",
                         .bytes = 0,
-                        .packets = 0});
+                        .packets = 0,
+                        .FIN_recieved = false});
     }else{
         conn[conn_index].sec = sec;
         conn[conn_index].usec = usec;
@@ -360,9 +368,18 @@ void parse_ssl(string sip, uint16_t sport, string dip, uint16_t dport, const u_c
 
         }
 
+        if(content_type < 20 || content_type > 23) break;
+
+        if((conn_index = find_data(sip, sport, dip, dport)) > -1 
+            || (conn_index = find_data(dip, dport, sip, sport)) > -1){
+            conn[conn_index].bytes += lenght;
+        }
+
         packet = (packet + lenght + 5);  // posunuti se v paketu za zpracovany tls
         size -= (lenght + 5);
     }while(size > 0);
+
+    
 }
 
 void inc_packet(string sip, uint16_t sport, string dip, uint16_t dport)
@@ -373,4 +390,21 @@ void inc_packet(string sip, uint16_t sport, string dip, uint16_t dport)
         || (conn_index = find_data(dip, dport, sip, sport)) > -1){
         conn[conn_index].packets += 1;
     }
+}
+
+bool fin_test(std::string sip, uint16_t sport, std::string dip, uint16_t dport){
+
+    int conn_index = 0;
+    bool state = false;
+
+    if((conn_index = find_data(sip, sport, dip, dport)) > -1 
+        ||(conn_index = find_data(dip, dport, sip, sport)) > -1){
+            state = conn[conn_index].FIN_recieved;
+            //cout << sport << ", "<< dport << ", " << (state? "True":"False") << endl;
+            
+            if(state == true) return true;
+            conn[conn_index].FIN_recieved = !state;
+    }
+
+    return state;
 }

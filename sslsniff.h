@@ -39,6 +39,7 @@ struct Data{
     std::string sni;  //!< server name indication
     uint bytes;  //!< pocet poslanych bytu
     uint packets;  //!< pocet poslanych paketu
+    bool FIN_recieved;  //! < flag pro obdrzeny FIN flag od serveru
 };
 
 std::vector<Data> conn;  //!< seznam vsech bezicich spojeni
@@ -80,5 +81,16 @@ void parse_ssl(std::string sip, uint16_t sport, std::string dip, uint16_t dport,
 
 void inc_packet(std::string sip, uint16_t sport, std::string dip, uint16_t dport);
 
+/**
+ * @brief testovani fin flagu
+ * 
+ * @param sip source ip
+ * @param sport source port
+ * @param dip destination ip
+ * @param dport destination port
+ * @return true server obdrzel potvrzeni fin flagu 
+ * @return false client obdrzel prvni fin flag
+ */
+bool fin_test(std::string sip, uint16_t sport, std::string dip, uint16_t dport);
 
 #endif
