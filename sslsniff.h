@@ -39,7 +39,8 @@ struct Data{
     std::string sni;  //!< server name indication
     uint bytes;  //!< pocet poslanych bytu
     uint packets;  //!< pocet poslanych paketu
-    bool FIN_recieved;  //! < flag pro obdrzeny FIN flag od serveru
+    bool FIN_received;  //! < flag pro obdrzeny FIN flag od serveru
+    uint TLS_STATE;  //!< informace o tom v jakem se nachazi TLS handshake dane komunikace
 };
 
 std::vector<Data> conn;  //!< seznam vsech bezicich spojeni

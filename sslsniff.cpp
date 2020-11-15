@@ -249,9 +249,9 @@ void process_packet(u_char* user, const pcap_pkthdr* header, const u_char* packe
                 }
 
             }
-
-            if(header->len > ETH_ZLEN && payload_offset != header->len){ 
-                payload_offset = ETH_HLEN + ip4_h->ihl*4 + tcp_h->doff*4;  
+            
+            payload_offset = ETH_HLEN + ip4_h->ihl*4 + tcp_h->doff*4;  
+            if(header->len > ETH_ZLEN && payload_offset != header->len){
                 parse_ssl(client_ip, sport, server_ip, dport, &packet[payload_offset], header->len - payload_offset);
             }
             inc_packet(client_ip, sport, server_ip, dport);
@@ -280,19 +280,22 @@ void print_conn(time_t sec, time_t usec, string sip, uint16_t sport, string dip,
         ||(conn_index = find_data(dip, dport, sip, sport)) > -1){
 
         Data c = conn[conn_index];
+        if(c.TLS_STATE == 2){
+            const tm *p_time = localtime(&c.sec);  // cas paketu
+            char timestr[65];  // cas paketu v retezci
+            strftime(timestr, sizeof(timestr),"%F %H:%M:%S", p_time);
+            printf("%s.%06ld,", timestr, c.usec);
+            double time_diff = ((sec - c.sec) * 1000000.0 + (usec - c.usec)) / 1000000.0;
 
-        const tm *p_time = localtime(&c.sec);  // cas paketu
-        char timestr[20];  // cas paketu v retezci
-        strftime(timestr, sizeof(timestr),"%F %H:%M:%S", p_time);
-        printf("%s.%03ld,", timestr, c.usec);
-
-        cout << c.client_ip << ","
-             << c.client_port << ","
-             << c.server_ip << ","
-             << c.sni << ","
-             << c.bytes << ","
-             << c.packets << ","
-             << ((sec - c.sec) * 1000000.0 + (usec - c.usec)) / 1000000.0 << endl;
+            cout << c.client_ip << ","
+                << c.client_port << ","
+                << c.server_ip << ","
+                << c.sni << ","
+                << c.bytes << ","
+                << c.packets << ",";
+                printf("%06f\n", time_diff);
+                //<<  time_diff / 1000000.0 << "." << time_diff % 1000000 << endl;
+        }
 
         conn.erase(conn.begin()+conn_index);  // smazani komunikace ze seznamu
     }
@@ -312,7 +315,7 @@ void init_conn(time_t sec, time_t usec, string sip, uint16_t sport, string dip, 
                         .sni = "",
                         .bytes = 0,
                         .packets = 0,
-                        .FIN_recieved = false});
+                        .FIN_received = false});
     }else{
         conn[conn_index].sec = sec;
         conn[conn_index].usec = usec;
@@ -325,6 +328,12 @@ void parse_ssl(string sip, uint16_t sport, string dip, uint16_t dport, const u_c
         CHANGE_CIPHER_SPEC = 20, ALERT = 21, HANDSHAKE = 22, APPLICATION_DATA = 23
     }; 
 
+    //cout << sip << ", " \
+    //<< sport << ", " \
+    //<< dip << ", " \
+    //<< dport << ": " \
+    //<< size << endl;
+
     const uint8_t LENGHT_INDEX = 3;
     const uint8_t HANDSHAKE_TYPE_INDEX = 5;
 
@@ -332,54 +341,72 @@ void parse_ssl(string sip, uint16_t sport, string dip, uint16_t dport, const u_c
     ctype_values content_type;  // typ obsahu (handshake, app. data, alert, ...)
     uint16_t sni_lenght;  // delka sni
     char *sni = nullptr;  // server name indication
-    unsigned index = 43;  // index bytu v paketu, pro parsovani ssl/tls
+    unsigned index = 43;  // index kde je session ID 
     int conn_index = 0;  // index do seznamu spojeni
+    unsigned handshake_type = 0;
+    unsigned extension_lenght = 0;
+    unsigned extension_type = 0;
 
-    //cout << sip << ", " << dip << endl;
-    do{
-        content_type = ctype_values(packet[0]);
-        lenght = uint16_t(packet[LENGHT_INDEX] << 8 | packet[LENGHT_INDEX+1]);
+    content_type = ctype_values(packet[0]);
+    lenght = uint16_t(packet[LENGHT_INDEX] << 8 | packet[LENGHT_INDEX+1]);
+    if(content_type == HANDSHAKE){
+        handshake_type = uint8_t(packet[HANDSHAKE_TYPE_INDEX]);
+        if(handshake_type == 1){
+            index += uint8_t(packet[index]) + UINT8_BYTE;  // pricteme delku session id lenght + byte kde lezi delka
+            index += uint16_t(packet[index] << 8 | packet[index+1]) + UINT16_BYTE;  // pricteme delku cypher suit lenght + byty kde delka lezi
+            index += uint8_t(packet[index]) + UINT8_BYTE;  // pricteme comparison method lenght
+            
+            extension_lenght = uint16_t(packet[index] << 8 | packet[index+1]);
+            index += UINT16_BYTE;
+            while(extension_lenght != 0){
+                extension_type = uint16_t(packet[index] << 8 | packet[index+1]);
+                
+                if(extension_type == 0){
+                    index += 7;
+                    
+                    sni_lenght = uint16_t(packet[index] << 8 | packet[index+1]);
+                    index += UINT16_BYTE;
+                    sni = new char[sni_lenght+1];
+                    memcpy(sni, &packet[index], sni_lenght);
+                    sni[sni_lenght] = '\0';
 
-        //for(int i = 0; i < 10; i++){
-        //    printf("%x ", packet[i]);
-        //}
-        //printf("\n");
-        //cout << lenght << endl;
+                    if((conn_index = find_data(sip, sport, dip, dport)) > -1 
+                        || (conn_index = find_data(dip, dport, sip, sport)) > -1){
+                        conn[conn_index].sni = string(sni);
+                    }
 
-        if(content_type == HANDSHAKE && uint8_t(packet[HANDSHAKE_TYPE_INDEX]) == 1){  // 1 - Client Hello
+                    delete [] sni;
+                    break;
+                }
 
-            index += uint8_t(packet[index]) + UINT8_BYTE;
-            index += uint16_t(packet[index] << 8 | packet[index+1]) + UINT16_BYTE;
-            index += uint8_t(packet[index]) + UINT8_BYTE + 11;
-
-            sni_lenght = uint16_t(packet[index-2] << 8 | packet[index-1]);
-            sni = new char[sni_lenght+1];
-            sni[sni_lenght] = '\0';
-
-            memcpy(sni, &packet[index], sni_lenght);
-
-            if((conn_index = find_data(sip, sport, dip, dport)) > -1 
-                || (conn_index = find_data(dip, dport, sip, sport)) > -1){
-                conn[conn_index].sni = string(sni);
+                index += UINT16_BYTE;
+                index += uint16_t(packet[index] << 8 | packet[index+1]) + UINT16_BYTE;
+                extension_lenght -= (uint16_t(packet[index] << 8 | packet[index+1])+4);
             }
 
-            delete [] sni;
-        }else if(content_type < CHANGE_CIPHER_SPEC || content_type > APPLICATION_DATA){
 
+        }else if(handshake_type == 2){
+            if((conn_index = find_data(sip, sport, dip, dport)) > -1 
+                || (conn_index = find_data(dip, dport, sip, sport)) > -1){
+                conn[conn_index].TLS_STATE = 2;
+            }
         }
+    }
 
+    do{ 
+        content_type = ctype_values(packet[0]);
+        lenght = uint16_t(packet[LENGHT_INDEX] << 8 | packet[LENGHT_INDEX+1]);
         if(content_type < 20 || content_type > 23) break;
-
         if((conn_index = find_data(sip, sport, dip, dport)) > -1 
             || (conn_index = find_data(dip, dport, sip, sport)) > -1){
             conn[conn_index].bytes += lenght;
         }
 
+        //printf("%d\n", lenght);
         packet = (packet + lenght + 5);  // posunuti se v paketu za zpracovany tls
         size -= (lenght + 5);
     }while(size > 0);
 
-    
 }
 
 void inc_packet(string sip, uint16_t sport, string dip, uint16_t dport)
@@ -399,11 +426,11 @@ bool fin_test(std::string sip, uint16_t sport, std::string dip, uint16_t dport){
 
     if((conn_index = find_data(sip, sport, dip, dport)) > -1 
         ||(conn_index = find_data(dip, dport, sip, sport)) > -1){
-            state = conn[conn_index].FIN_recieved;
+            state = conn[conn_index].FIN_received;
             //cout << sport << ", "<< dport << ", " << (state? "True":"False") << endl;
             
             if(state == true) return true;
-            conn[conn_index].FIN_recieved = !state;
+            conn[conn_index].FIN_received = !state;
     }
 
     return state;
