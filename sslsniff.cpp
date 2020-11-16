@@ -123,7 +123,7 @@ int sniff(Params &params)
     bpf_program fp{};
     bpf_u_int32 netmask = 0;
     bpf_u_int32 ipaddr = 0;
-    char *capture_filter = (char*)"tcp port 443";
+    char *capture_filter = (char*)"tcp";
 
     if(params.interface){
 
@@ -213,17 +213,21 @@ void process_packet(u_char* user, const pcap_pkthdr* header, const u_char* packe
 
             if(tcp_h->syn && !tcp_h->ack){             
                 init_conn(header->ts.tv_sec, header->ts.tv_usec, client_ip, sport, server_ip, dport);
-                inc_packet(client_ip, sport, server_ip, dport);
-            }else if(tcp_h->fin && tcp_h->ack){         
-                inc_packet(client_ip, sport, server_ip, dport);
-                print_conn(header->ts.tv_sec, header->ts.tv_usec, client_ip, sport, server_ip, dport);
-            }else if(header->len > ETH_ZLEN && payload_offset != header->len){ 
-                payload_offset = ETH_HLEN + IPV6_HLEN + tcp_h->doff*4; 
-                parse_ssl(client_ip, sport, server_ip, dport, &packet[payload_offset], header->len - payload_offset);
-                inc_packet(client_ip, sport, server_ip, dport);
-            }else{
-                inc_packet(client_ip, sport, server_ip, dport);
+            }else if(tcp_h->fin && tcp_h->ack || tcp_h->rst){
+                FIN_STATE = fin_test(client_ip, sport, server_ip, dport);
+
+                if(FIN_STATE == true || tcp_h->rst){
+                    inc_packet(client_ip, sport, server_ip, dport);
+                    print_conn(header->ts.tv_sec, header->ts.tv_usec, client_ip, sport, server_ip, dport);
+                }
+
             }
+            
+            payload_offset = ETH_HLEN + IPV6_HLEN + tcp_h->doff*4; 
+            if(header->len > ETH_ZLEN && payload_offset != header->len){
+                parse_ssl(client_ip, sport, server_ip, dport, &packet[payload_offset], header->len - payload_offset);
+            }
+            inc_packet(client_ip, sport, server_ip, dport);
         }
     // IPv4
     }else if(ntohs(eth_h->ether_type) == ETHERTYPE_IP){
@@ -240,10 +244,10 @@ void process_packet(u_char* user, const pcap_pkthdr* header, const u_char* packe
 
             if(tcp_h->syn && !tcp_h->ack){             
                 init_conn(header->ts.tv_sec, header->ts.tv_usec, client_ip, sport, server_ip, dport);
-            }else if(tcp_h->fin && tcp_h->ack){
+            }else if(tcp_h->fin && tcp_h->ack || tcp_h->rst){
                 FIN_STATE = fin_test(client_ip, sport, server_ip, dport);
 
-                if(FIN_STATE == true){
+                if(FIN_STATE == true || tcp_h->rst){
                     inc_packet(client_ip, sport, server_ip, dport);
                     print_conn(header->ts.tv_sec, header->ts.tv_usec, client_ip, sport, server_ip, dport);
                 }
@@ -293,7 +297,7 @@ void print_conn(time_t sec, time_t usec, string sip, uint16_t sport, string dip,
                 << c.sni << ","
                 << c.bytes << ","
                 << c.packets << ",";
-                printf("%06f\n", time_diff);
+                printf("%03f\n", time_diff);
                 //<<  time_diff / 1000000.0 << "." << time_diff % 1000000 << endl;
         }
 
