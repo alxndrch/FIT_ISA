@@ -36,7 +36,6 @@ using namespace std;
 
 int main(int argc, char *argv[])
 {
-
     Params par = {.file = nullptr, .interface = nullptr, .help = false};
 
     if(arg_process(argc, argv, par) == ERR)
@@ -109,14 +108,14 @@ int arg_process(int argc, char** argv, Params &params)
 
 int sniff(Params &params)
 {
-    /***************************************************************************************
+    /**************************************************************************
      *    Inspirováno z:
      *    Title: Programming with pcap
      *    Author: Tim Carstens
      *    Date: 2020
      *    Availability: https://www.tcpdump.org/pcap.html
      *
-    ***************************************************************************************/
+    **************************************************************************/
 
     pcap_t* pcap_handle;  // packet capture handle
     char errbuf[PCAP_ERRBUF_SIZE];  // chybovy vystup
@@ -175,168 +174,145 @@ int sniff(Params &params)
 
 void process_packet(u_char* user, const pcap_pkthdr* header, const u_char* packet)
 {
-    unsigned payload_offset = 0;  // celkova velikost hlavicky
-
-    udphdr *udp_h{};  // hlavicka UDP
     tcphdr *tcp_h{};  // hlavicka TCP
     iphdr *ip4_h{};  // hlavicka IPv4 datagramu
     ip6_hdr *ip6_h{};  // hlavicka IPv6 datagramu
     ether_header* eth_h{};  // hlavicka ethernetoveho ramce
 
-    string client_ip;  // zdrojova ip adresa
-    string server_ip;  // cilova ip adresa
+    string src_ip;  // zdrojova ip adresa
+    string dest_ip;  // cilova ip adresa
 
-    u_int16_t dport = 0;  // cilovy port
-    u_int16_t sport = 0;  // zdrojovy port
-
-    hostent *dest_addr = nullptr;  // cilova adresa
-    hostent *src_addr = nullptr; // zrojova adresa
-
-    in_addr_t ip = 0;  // pomocna promenna pro vyhodnoceni domenoveho jmena
-
-    bool FIN_STATE = false;  // pocitadlo FIN flagu
-
-    eth_h = (ether_header*) (packet);
+    eth_h = (ether_header*)packet;
 
     // IPv6
     if(ntohs(eth_h->ether_type) == ETHERTYPE_IPV6){
         ip6_h = (ip6_hdr*) (packet + ETH_HLEN);
 
         char ip[40];
-        inet_ntop(AF_INET6, &ip6_h->ip6_src, ip, 40); client_ip = ip;
-        inet_ntop(AF_INET6, &ip6_h->ip6_dst, ip, 40); server_ip = ip;
+        inet_ntop(AF_INET6, &ip6_h->ip6_src, ip, 40); src_ip = ip;  // zdrojova adresa
+        inet_ntop(AF_INET6, &ip6_h->ip6_dst, ip, 40); dest_ip = ip;  // cilova adresa 
 
         if(ip6_h->ip6_ctlun.ip6_un1.ip6_un1_nxt == IPPROTO_TCP){
             tcp_h = (tcphdr*) (packet + ETH_HLEN + IPV6_HLEN);
-            sport = ntohs(tcp_h->th_sport);
-            dport = ntohs(tcp_h->th_dport);
-
-            if(tcp_h->syn && !tcp_h->ack){             
-                init_conn(header->ts.tv_sec, header->ts.tv_usec, client_ip, sport, server_ip, dport);
-            }else if(tcp_h->fin && tcp_h->ack || tcp_h->rst){
-                FIN_STATE = fin_test(client_ip, sport, server_ip, dport);
-
-                if(FIN_STATE == true || tcp_h->rst){
-                    inc_packet(client_ip, sport, server_ip, dport);
-                    print_conn(header->ts.tv_sec, header->ts.tv_usec, client_ip, sport, server_ip, dport);
-                }
-
-            }
-            
-            payload_offset = ETH_HLEN + IPV6_HLEN + tcp_h->doff*4; 
-            if(header->len > ETH_ZLEN && payload_offset != header->len){
-                parse_ssl(client_ip, sport, server_ip, dport, &packet[payload_offset], header->len - payload_offset);
-            }
-            inc_packet(client_ip, sport, server_ip, dport);
+            packet_analyzer(src_ip, dest_ip, tcp_h, header, packet, ETH_HLEN + IPV6_HLEN + tcp_h->doff*4);
         }
     // IPv4
     }else if(ntohs(eth_h->ether_type) == ETHERTYPE_IP){
         ip4_h = (iphdr*) (packet + ETH_HLEN);
 
         char ip[16];
-        inet_ntop(AF_INET, &ip4_h->saddr, ip,16); client_ip = ip;
-        inet_ntop(AF_INET, &ip4_h->daddr, ip,16); server_ip = ip;
+        inet_ntop(AF_INET, &ip4_h->saddr, ip,16); src_ip = ip;  // zdrojova adresa
+        inet_ntop(AF_INET, &ip4_h->daddr, ip,16); dest_ip = ip;  // cilova adresa 
 
         if(ip4_h->protocol == IPPROTO_TCP){
             tcp_h = (tcphdr*) (packet + ETH_HLEN + ip4_h->ihl*4);
-            sport = ntohs(tcp_h->th_sport);  // host port 
-            dport = ntohs(tcp_h->th_dport);  // server port
-
-            if(tcp_h->syn && !tcp_h->ack){             
-                init_conn(header->ts.tv_sec, header->ts.tv_usec, client_ip, sport, server_ip, dport);
-            }else if(tcp_h->fin && tcp_h->ack || tcp_h->rst){
-                FIN_STATE = fin_test(client_ip, sport, server_ip, dport);
-
-                if(FIN_STATE == true || tcp_h->rst){
-                    inc_packet(client_ip, sport, server_ip, dport);
-                    print_conn(header->ts.tv_sec, header->ts.tv_usec, client_ip, sport, server_ip, dport);
-                }
-
-            }
-            
-            payload_offset = ETH_HLEN + ip4_h->ihl*4 + tcp_h->doff*4;  
-            if(header->len > ETH_ZLEN && payload_offset != header->len){
-                parse_ssl(client_ip, sport, server_ip, dport, &packet[payload_offset], header->len - payload_offset);
-            }
-            inc_packet(client_ip, sport, server_ip, dport);
+            packet_analyzer(src_ip, dest_ip, tcp_h, header, packet, ETH_HLEN + ip4_h->ihl*4 + tcp_h->doff*4);
         }
     }
 }
 
-int find_data(string sip, uint16_t sport, string dip, uint16_t dport)
+void packet_analyzer(string src_ip, string dest_ip, tcphdr* tcp, const pcap_pkthdr* header, const u_char* packet, uint8_t payload_offset)
 {
-    for(int i = 0; i < conn.size(); i++){
-        Data c = conn[i];
+    bool FIN_STATE = false;  // pocitadlo FIN flagu, false = nebyl zadny prijat
+    
+    uint16_t src_port = 0;  // cilovy port
+    uint16_t dest_port = 0;  // zdrojovy port
+
+    src_port = ntohs(tcp->th_sport);  // host port 
+    dest_port = ntohs(tcp->th_dport);  // server port
+
+    // identifikace spojeni 
+    Connection c{.src_ip = src_ip, .dest_ip = dest_ip, .src_port = src_port, .dest_port = dest_port};
+            
+    if(tcp->syn && !tcp->ack){             
+        init_conn(header->ts.tv_sec, header->ts.tv_usec, c);
+    }else if(tcp->fin && tcp->ack || tcp->rst){
+        FIN_STATE = fin_test(c);
+
+        if(FIN_STATE == true || tcp->rst){
+            inc_packet(c);
+            print_conn(header->ts.tv_sec, header->ts.tv_usec, c);
+        }
+
+    }
+    
+    if(header->len > ETH_ZLEN && payload_offset != header->len){
+        parse_ssl(c, &packet[payload_offset], header->len - payload_offset);
+    }
+    inc_packet(c);  
+}
+
+int find_data(Connection conn)
+{
+    for(int i = 0; i < active_conns.size(); i++){
+        Data c = active_conns[i];
         
-        if(c.client_ip == sip && c.client_port == sport 
-            && c.server_ip == dip && c.server_port == dport)
+        // vyhledani spojeni v aktivnich spojenich (src -> dest)
+        if(c.conn.src_ip == conn.src_ip && c.conn.src_port == conn.src_port 
+            && c.conn.dest_ip == conn.dest_ip && c.conn.dest_port == conn.dest_port)
+                return i;
+        // vyhledani spojeni prichazejiciho z dest: (dest -> src)
+        if(c.conn.src_ip == conn.dest_ip && c.conn.src_port == conn.dest_port 
+            && c.conn.dest_ip == conn.src_ip && c.conn.dest_port == conn.src_port)
                 return i;
     }
 
-    return -1;
+    return -1;  // nebylo nalezeno zadne odpovidajici spojeni
 }
 
-void print_conn(time_t sec, time_t usec, string sip, uint16_t sport, string dip, uint16_t dport)
+void print_conn(time_t sec, time_t usec, Connection conn)
 {
-    int conn_index = 0;
+    int active_conn_index = 0;
 
-    if((conn_index = find_data(sip, sport, dip, dport)) > -1 
-        ||(conn_index = find_data(dip, dport, sip, sport)) > -1){
+    if((active_conn_index = find_data(conn)) > -1){
 
-        Data c = conn[conn_index];
-        if(c.TLS_STATE == 2){
+        Data c = active_conns[active_conn_index];
+
+        if(c.TLS_STATE == 2){  // pokud probehlo tls spojeni 
             const tm *p_time = localtime(&c.sec);  // cas paketu
             char timestr[65];  // cas paketu v retezci
             strftime(timestr, sizeof(timestr),"%F %H:%M:%S", p_time);
             printf("%s.%06ld,", timestr, c.usec);
             double time_diff = ((sec - c.sec) * 1000000.0 + (usec - c.usec)) / 1000000.0;
 
-            cout << c.client_ip << ","
-                << c.client_port << ","
-                << c.server_ip << ","
+            cout << c.conn.src_ip << ","
+                << c.conn.src_port << ","
+                << c.conn.dest_ip << ","
                 << c.sni << ","
                 << c.bytes << ","
                 << c.packets << ",";
-                printf("%03f\n", time_diff);
-                //<<  time_diff / 1000000.0 << "." << time_diff % 1000000 << endl;
+            
+            printf("%06f\n", time_diff);
         }
 
-        conn.erase(conn.begin()+conn_index);  // smazani komunikace ze seznamu
+        active_conns.erase(active_conns.begin()+active_conn_index);  // smazani komunikace ze seznamu
     }
 }
 
-void init_conn(time_t sec, time_t usec, string sip, uint16_t sport, string dip, uint16_t dport)
+void init_conn(time_t sec, time_t usec, Connection conn)
 {
-    int conn_index = 0;
+    int active_conn_index = 0;
 
-    if((conn_index = find_data(sip, sport, dip, dport)) == -1){
-        conn.push_back({.sec = sec,
+    // pokud spojeni neni mezi aktivnimi, ulozi se 
+    if((active_conn_index = find_data(conn)) == -1){
+        active_conns.push_back({.sec = sec,
                         .usec = usec, 
-                        .client_ip = sip, 
-                        .server_ip = dip,
-                        .client_port = sport,
-                        .server_port = dport, 
+                        .conn = conn,
                         .sni = "",
                         .bytes = 0,
                         .packets = 0,
                         .FIN_received = false});
-    }else{
-        conn[conn_index].sec = sec;
-        conn[conn_index].usec = usec;
+    }else{  // pokud dojde znovu k SYN flagu
+        active_conns[active_conn_index].sec = sec;
+        active_conns[active_conn_index].usec = usec;
     }
 }
 
-void parse_ssl(string sip, uint16_t sport, string dip, uint16_t dport, const u_char *packet, int size)
+void parse_ssl(Connection conn, const u_char *packet, int size)
 {
     enum ctype_values : uint8_t { 
         CHANGE_CIPHER_SPEC = 20, ALERT = 21, HANDSHAKE = 22, APPLICATION_DATA = 23
     }; 
-
-    //cout << sip << ", " \
-    //<< sport << ", " \
-    //<< dip << ", " \
-    //<< dport << ": " \
-    //<< size << endl;
 
     const uint8_t LENGHT_INDEX = 3;
     const uint8_t HANDSHAKE_TYPE_INDEX = 5;
@@ -346,96 +322,99 @@ void parse_ssl(string sip, uint16_t sport, string dip, uint16_t dport, const u_c
     uint16_t sni_lenght;  // delka sni
     char *sni = nullptr;  // server name indication
     unsigned index = 43;  // index kde je session ID 
-    int conn_index = 0;  // index do seznamu spojeni
+    int active_conn_index = 0;  // index do seznamu spojeni
     unsigned handshake_type = 0;
-    unsigned extension_lenght = 0;
+    unsigned extension_lenght = 0;  // delka extension casti
     unsigned extension_type = 0;
 
     content_type = ctype_values(packet[0]);
-    lenght = uint16_t(packet[LENGHT_INDEX] << 8 | packet[LENGHT_INDEX+1]);
+    lenght = get_number(packet[LENGHT_INDEX], packet[LENGHT_INDEX+1]);
     if(content_type == HANDSHAKE){
         handshake_type = uint8_t(packet[HANDSHAKE_TYPE_INDEX]);
-        if(handshake_type == 1){
-            index += uint8_t(packet[index]) + UINT8_BYTE;  // pricteme delku session id lenght + byte kde lezi delka
-            index += uint16_t(packet[index] << 8 | packet[index+1]) + UINT16_BYTE;  // pricteme delku cypher suit lenght + byty kde delka lezi
-            index += uint8_t(packet[index]) + UINT8_BYTE;  // pricteme comparison method lenght
+        if(handshake_type == CLIENT_HELLO){
+            index += uint8_t(packet[index]) + UINT8_BYTE;  // + delka session id lenght + byte kde lezi delka
+            index += get_number(packet[index], packet[index+1]) + UINT16_BYTE;  // + delka cypher suit lenght + byty kde delka lezi
+            index += uint8_t(packet[index]) + UINT8_BYTE;  // + comparison method lenght
             
-            extension_lenght = uint16_t(packet[index] << 8 | packet[index+1]);
-            index += UINT16_BYTE;
+            extension_lenght = get_number(packet[index], packet[index+1]);
+            index += UINT16_BYTE;  // + 2 bajty, kde lezi extension lenght
             while(extension_lenght != 0){
-                extension_type = uint16_t(packet[index] << 8 | packet[index+1]);
+                extension_type = get_number(packet[index], packet[index+1]);
                 
-                if(extension_type == 0){
-                    index += 7;
+                if(extension_type == SERVER_NAME){  // pokud je extension type == server_name
+                    index += 7;  // posunuti o 7B z extension type na sni lenght
                     
-                    sni_lenght = uint16_t(packet[index] << 8 | packet[index+1]);
-                    index += UINT16_BYTE;
+                    sni_lenght = get_number(packet[index], packet[index+1]);
+                    index += UINT16_BYTE;  // posuniti za sni lenght
                     sni = new char[sni_lenght+1];
                     memcpy(sni, &packet[index], sni_lenght);
                     sni[sni_lenght] = '\0';
 
-                    if((conn_index = find_data(sip, sport, dip, dport)) > -1 
-                        || (conn_index = find_data(dip, dport, sip, sport)) > -1){
-                        conn[conn_index].sni = string(sni);
+                    if((active_conn_index = find_data(conn)) > -1){
+                        active_conns[active_conn_index].sni = string(sni);
                     }
 
                     delete [] sni;
                     break;
                 }
 
-                index += UINT16_BYTE;
-                index += uint16_t(packet[index] << 8 | packet[index+1]) + UINT16_BYTE;
-                extension_lenght -= (uint16_t(packet[index] << 8 | packet[index+1])+4);
+                index += UINT16_BYTE;  // pokud extension_type != server_name posun na delku dalsiho extenstion
+                index += get_number(packet[index], packet[index+1]) + UINT16_BYTE;  // posun o delku extension + 2B na kterych je delka ulozena
+                extension_lenght -= (get_number(packet[index], packet[index+1])+4);
             }
 
 
-        }else if(handshake_type == 2){
-            if((conn_index = find_data(sip, sport, dip, dport)) > -1 
-                || (conn_index = find_data(dip, dport, sip, sport)) > -1){
-                conn[conn_index].TLS_STATE = 2;
+        }else if(handshake_type == SERVER_HELLO){
+            if((active_conn_index = find_data(conn)) > -1){
+                active_conns[active_conn_index].TLS_STATE = 2;
             }
+        }
+    }else if(content_type == ALERT){
+        if((active_conn_index = find_data(conn)) > -1){
+            active_conns[active_conn_index].TLS_STATE = 2;
         }
     }
 
     do{ 
         content_type = ctype_values(packet[0]);
-        lenght = uint16_t(packet[LENGHT_INDEX] << 8 | packet[LENGHT_INDEX+1]);
+        lenght = get_number(packet[LENGHT_INDEX], packet[LENGHT_INDEX+1]);
         if(content_type < 20 || content_type > 23) break;
-        if((conn_index = find_data(sip, sport, dip, dport)) > -1 
-            || (conn_index = find_data(dip, dport, sip, sport)) > -1){
-            conn[conn_index].bytes += lenght;
+        if((active_conn_index = find_data(conn)) > -1){
+            active_conns[active_conn_index].bytes += lenght;
         }
 
-        //printf("%d\n", lenght);
         packet = (packet + lenght + 5);  // posunuti se v paketu za zpracovany tls
         size -= (lenght + 5);
     }while(size > 0);
 
 }
 
-void inc_packet(string sip, uint16_t sport, string dip, uint16_t dport)
+void inc_packet(Connection conn)
 {
-    int conn_index = 0;
+    int active_conn_index = 0;
 
-    if((conn_index = find_data(sip, sport, dip, dport)) > -1 
-        || (conn_index = find_data(dip, dport, sip, sport)) > -1){
-        conn[conn_index].packets += 1;
+    if((active_conn_index = find_data(conn)) > -1){
+        active_conns[active_conn_index].packets += 1;
     }
 }
 
-bool fin_test(std::string sip, uint16_t sport, std::string dip, uint16_t dport){
-
-    int conn_index = 0;
+bool fin_test(Connection conn)
+{
+    int active_conn_index = 0;
     bool state = false;
 
-    if((conn_index = find_data(sip, sport, dip, dport)) > -1 
-        ||(conn_index = find_data(dip, dport, sip, sport)) > -1){
-            state = conn[conn_index].FIN_received;
-            //cout << sport << ", "<< dport << ", " << (state? "True":"False") << endl;
+    if((active_conn_index = find_data(conn)) > -1){
+            state = active_conns[active_conn_index].FIN_received;
             
+            // pokud byl odrzen druhy fin, vraci se true 
             if(state == true) return true;
-            conn[conn_index].FIN_received = !state;
+            // pokud byl obdrzen prvni fin, meni se stav
+            active_conns[active_conn_index].FIN_received = !state;
     }
 
     return state;
+}
+
+inline int get_number(u_char B1, u_char B2){
+    return uint16_t(B1 << 8 | B2);
 }
