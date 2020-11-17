@@ -1,0 +1,35 @@
+.TH SSLSNIFFER 1
+.SH NAME
+sslniffer \- monitoring SSL spojení
+.SH SYNOPSIS
+.B sudo sslsniffer
+[\fB\-r\fR \fIfile\fR]
+[\fB\-i\fR \fIinterface\fR]
+.SH DESCRIPTION
+.B sslsniffer
+Zobrazí informace o SSL spojení z pcap souboru nebo ze siťového rozhraní.
+Není možné monitorovat spojení zaroveň ze síťového rozhrnaní a z pcap souboru.
+.br
+Výstup je ve formatu: <timestamp>,<client ip>,<client port>,<server ip>,<SNI>,<bytes>,<packets>,<duration sec>
+.SH OPTIONS
+.TP
+.BR \-r
+Soubor se síťovým provozem ve formátu pcapng.
+.TP
+.BR \-i
+Síťové rozhraní, na kterém program naslouchá.
+
+.SH EXIT STATUS
+Program končí 0, pokud nenastal žádný problém, jinak končí 1 a chybovou hlaškou.
+.SH EXAMPLE
+To write some text to the standard output, use the
+.BR printf (1)
+command:
+.PP
+.nf
+.RS
+$ \fBsudo sslsniffer\fR -r isa-test.pcapng
+$ 2020-11-15 22:27:38.560987,194.228.76.93,17470,147.229.8.17,qwe.fit.vutbr.cz,6659,21,0.075
+.RE
+.fi
+.PP
