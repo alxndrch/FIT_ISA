@@ -86,7 +86,7 @@ int arg_process(int argc, char** argv, Params &params)
                 }
 
                 params.help = true;
-                cout << "sudo ./sslsniff [-r <file>] [-i interface] interface [-h]" << endl;
+                cout << "sudo ./sslsniff [-r <file>] [-i interface] [-h]" << endl;
                 cout << "-h             help" << endl;
                 cout << "-r <file>      pcapng file" << endl;
                 cout << "-i interace    active network interface for sniffing" << endl;
